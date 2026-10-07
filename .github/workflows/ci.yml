@@ -1,0 +1,65 @@
+name: C++ CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      # Debug mantiene activos los assert de protocol_tests.cpp.
+      - name: Configure
+        run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/ci --parallel 2
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+  sonar:
+    name: SonarQube
+    needs: build-test
+    # Se activa expresamente tras configurar Cloud. Solo rama principal;
+    # no depende de que el plan contratado permita analizar PR o ramas extra.
+    if: >-
+      vars.SONAR_ENABLED == 'true' &&
+      github.event_name != 'pull_request' &&
+      github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check Sonar configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+        run: |
+          test -n "$SONAR_TOKEN" || { echo 'Missing secret SONAR_TOKEN'; exit 1; }
+          test -n "$SONAR_PROJECT_KEY" || { echo 'Missing variable SONAR_PROJECT_KEY'; exit 1; }
+          test -n "$SONAR_ORGANIZATION" || { echo 'Missing variable SONAR_ORGANIZATION'; exit 1; }
+      # El analizador necesita los comandos reales, includes y flags de C++.
+      - name: Configure compilation database
+        run: >-
+          cmake -S . -B build/sonar
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: cmake --build build/sonar --parallel 2
+      - name: Scan and wait for quality gate
+        uses: SonarSource/sonarqube-scan-action@v8.2.2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >-
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}

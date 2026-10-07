@@ -1,0 +1,6 @@
+{"timestamp":"2026-09-08T09:00:00Z","cell_id":"MAD-001","subscriber_id":"u-100","app":"video","latency_ms":42.0,"throughput_mbps":38.5,"packet_loss_pct":0.1}
+{"timestamp":"2026-09-08T09:00:01Z","cell_id":"MAD-001","subscriber_id":"u-101","app":"web","latency_ms":55.0,"throughput_mbps":22.1,"packet_loss_pct":0.2}
+{"timestamp":"2026-09-08T09:00:02Z","cell_id":"MAD-002","subscriber_id":"u-102","app":"video","latency_ms":180.0,"throughput_mbps":3.2,"packet_loss_pct":2.4}
+{"timestamp":"2026-09-08T09:00:03Z","cell_id":"MAD-002","subscriber_id":"u-103","app":"gaming","latency_ms":145.0,"throughput_mbps":4.8,"packet_loss_pct":1.8}
+{"timestamp":"2026-09-08T09:00:04Z","cell_id":"MAD-003","subscriber_id":"u-104","app":"voice","latency_ms":95.0,"throughput_mbps":7.2,"packet_loss_pct":0.4}
+{"timestamp":"2026-09-08T09:00:05Z","cell_id":"MAD-003","subscriber_id":"u-105","app":"video","latency_ms":115.0,"throughput_mbps":6.1,"packet_loss_pct":0.7}
