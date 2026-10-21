@@ -105,6 +105,8 @@ struct ServerConfig {
     std::string host{"127.0.0.1"};
     std::uint16_t port{9000};
     std::size_t max_line_bytes{4096};
+    std::size_t worker_count{4};
+    std::size_t queue_capacity{16};
 };
 ```
 
@@ -133,19 +135,21 @@ Key interview point:
 
 Responsibilities:
 
-- Block on `accept()` until a client connects.
+- Wait with `poll()` and accept a client using a nonblocking listening socket.
 - Receive a new `client_fd` for that connection.
-- Start one thread per client.
+- Enqueue the socket for a fixed pool of workers, or close it if the queue is full.
 
 Current design:
 
 ```cpp
-std::thread(&TcpServer::handle_client, this, client_fd).detach();
+clients_ready_.wait(lock, [this] {
+    return stopping_ || !pending_clients_.empty();
+});
 ```
 
 What to say:
 
-> This is simple and easy to explain, but it does not scale as well as an event loop or thread pool. A production telco system with many connections would likely use Boost.Asio, epoll/kqueue, or a pool-based architecture.
+> The producer accepts connections and workers consume them from a bounded queue. The mutex protects the queue and connection registry, not network processing. Idle clients still occupy workers. See CONCURRENCY.md for the complete lifecycle, shutdown and demo.
 
 ### `TcpServer::handle_client()`
 
@@ -156,7 +160,7 @@ Responsibilities:
 - Read one line at a time.
 - Pass each line to `LineProtocol`.
 - Send the response back.
-- Close the connection on `QUIT` or disconnect.
+- Return on `QUIT`, disconnect or I/O error; the worker closes the connection.
 
 Important idea:
 

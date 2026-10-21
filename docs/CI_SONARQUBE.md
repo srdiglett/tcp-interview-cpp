@@ -13,7 +13,8 @@ actualizar una pull request, y manualmente desde Actions.
 
 1. Checkout descarga el codigo.
 2. CMake configura y compila el servidor y los tests en Debug.
-3. CTest ejecuta protocol_tests. Debug conserva los assert de estos tests.
+3. CTest ejecuta protocol_tests y las pruebas de red del pool con Python 3.
+   Debug conserva los assert de los tests C++.
 4. En la rama principal, si SONAR_ENABLED=true, otro job analiza el servidor
    en SonarQube Cloud y espera el resultado del quality gate.
 
@@ -76,7 +77,7 @@ en la rama principal, no debe configurarse como check obligatorio de las PR.
 
 ## Reproducir compilacion y tests localmente
 
-Con CMake y compilador C++ instalados:
+Con CMake, Python 3 y compilador C++ instalados:
 
 ```bash
 cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON

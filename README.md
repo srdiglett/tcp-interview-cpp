@@ -2,7 +2,11 @@
 
 Small TCP server in modern C++ for interview practice.
 
-The goal is to keep the code simple enough to explain at a whiteboard, while still covering real networking topics: sockets, bind/listen/accept, line-based protocols, per-client concurrency, graceful shutdown, and basic tests.
+The goal is to keep the code simple enough to explain at a whiteboard, while covering sockets, bind/listen/accept, line-based protocols, a bounded connection queue, a fixed worker pool, coordinated shutdown, and tests.
+
+See [Producer-consumer and mutex guide](docs/CONCURRENCY.md) for the current
+architecture and a three-client demo. The PowerPoint in docs/ covers the current
+worker pool and includes the Yocto/QEMU demo as an appendix.
 
 ## Study Guide
 
@@ -20,7 +24,7 @@ With Make, no extra dependencies beyond Apple clang/Xcode Command Line Tools:
 make
 ```
 
-With CMake, if installed:
+With CMake and Python 3 installed (Python runs the server integration tests):
 
 ```bash
 cmake -S . -B build
@@ -32,6 +36,9 @@ cmake --build build
 ```bash
 ./build/tcp_server --host 127.0.0.1 --port 9000
 ```
+
+Pool settings: `--workers 4 --queue-capacity 16`. A full queue rejects new
+connections; each worker handles one connection until it closes.
 
 In another terminal:
 
@@ -83,6 +90,10 @@ The example models a common analytics shape: parse events, validate fields, grou
 
 ## SFTP/SSH Integration Example
 
+For a real local SFTP target running Yocto Linux ARM64 with its own kernel in
+QEMU, see [Yocto/QEMU demo](docs/YOCTO_QEMU.md). The client accepts an optional
+final port argument, for example `2222` for this virtual machine.
+
 The server in this repository is still a plain TCP learning server. For real SFTP/SSH usage in C++, see:
 
 ```text
@@ -126,6 +137,7 @@ With Make:
 
 ```bash
 make test
+make test-server
 ```
 
 With CMake:
@@ -138,6 +150,7 @@ ctest --test-dir build --output-on-failure
 
 - Why TCP is stream-oriented, not message-oriented.
 - Why this server defines a line-based protocol with `\n` delimiters.
-- Tradeoffs of one thread per client versus an event loop.
+- Producer-consumer coordination with mutex, condition_variable and join.
+- Tradeoffs of a blocking worker pool versus an event loop.
 - Handling partial reads/writes and client disconnects.
 - Where you would add timeouts, TLS, structured logging, and backpressure.

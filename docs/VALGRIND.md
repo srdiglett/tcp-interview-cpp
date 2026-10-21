@@ -79,11 +79,10 @@ Tras recibir BYE y cerrar los clientes, pulsa Ctrl+C en la terminal del servidor
 para obtener el informe. El puerto se publica solo en localhost del Mac.
 QUIT cierra una conexion, no el servidor entero.
 
-Este servidor didactico usa hilos detached y no los espera al apagar.
-Cerrar con clientes activos puede producir informes distintos y problemas de
-vida util del objeto TcpServer. No atribuyas esos informes a fugas sin examinar
-las trazas y el estado de los hilos. Para la primera practica, los tests son mas
-faciles de interpretar porque terminan por si solos.
+El servidor usa ahora un pool fijo y espera a los trabajadores con join al
+apagar. stop() interrumpe los sockets activos y descarta los pendientes.
+Consulta CONCURRENCY.md para seguir el mutex, la cola y la condicion. Para la
+primera practica de memoria, los tests del protocolo terminan por si solos.
 
 Referencia: https://valgrind.org/docs/manual/mc-manual.html
 Plataformas: https://valgrind.org/info/platforms.html

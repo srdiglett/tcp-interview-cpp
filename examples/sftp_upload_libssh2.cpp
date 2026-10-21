@@ -173,9 +173,9 @@ void upload_file(LIBSSH2_SFTP* sftp, const std::string& local_path, const std::s
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    if (argc != 6) {
+    if (argc != 6 && argc != 7) {
         std::cerr << "Usage: " << argv[0]
-                  << " <host> <user> <private-key> <local-file> <remote-file>\n";
+                  << " <host> <user> <private-key> <local-file> <remote-file> [port]\n";
         return 2;
     }
 
@@ -186,11 +186,17 @@ int main(int argc, char* argv[]) {
     const std::string remote_path = argv[5];
 
     try {
+        const std::string port = argc == 7 ? argv[6] : "22";
+        if (port.empty() || port.size() > 5 ||
+            port.find_first_not_of("0123456789") != std::string::npos ||
+            std::stoi(port) < 1 || std::stoi(port) > 65535) {
+            throw std::runtime_error("invalid port");
+        }
         if (libssh2_init(0) != 0) {
             throw std::runtime_error("libssh2_init failed");
         }
 
-        Fd socket_fd = connect_tcp(host, "22");
+        Fd socket_fd = connect_tcp(host, port);
 
         LIBSSH2_SESSION* session = libssh2_session_init();
         if (session == nullptr) {

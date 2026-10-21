@@ -1,5 +1,5 @@
 CXX ?= clang++
-CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -Iinclude
+CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -pthread -Iinclude
 BUILD_DIR := build
 BOOST_PREFIX ?= /opt/homebrew/opt/boost
 BOOST_CFLAGS ?= -I$(BOOST_PREFIX)/include
@@ -12,7 +12,7 @@ LIB_SOURCES := src/protocol.cpp src/server.cpp
 APP_SOURCES := src/main.cpp $(LIB_SOURCES)
 TEST_SOURCES := tests/protocol_tests.cpp src/protocol.cpp
 
-.PHONY: all test smoke ux-analytics sftp-example clean valgrind valgrind-server
+.PHONY: all test test-server smoke ux-analytics sftp-example clean valgrind valgrind-server
 
 all: $(BUILD_DIR)/tcp_server
 
@@ -25,7 +25,7 @@ valgrind-server:
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/tcp_server: $(APP_SOURCES) | $(BUILD_DIR)
+$(BUILD_DIR)/tcp_server: $(APP_SOURCES) $(wildcard include/tcp_interview/*.hpp) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(APP_SOURCES) -o $@
 
 $(BUILD_DIR)/protocol_tests: $(TEST_SOURCES) | $(BUILD_DIR)
@@ -33,6 +33,9 @@ $(BUILD_DIR)/protocol_tests: $(TEST_SOURCES) | $(BUILD_DIR)
 
 test: $(BUILD_DIR)/protocol_tests
 	./$(BUILD_DIR)/protocol_tests
+
+test-server: $(BUILD_DIR)/tcp_server
+	python3 tests/server_pool_tests.py
 
 smoke: $(BUILD_DIR)/tcp_server
 	./scripts/smoke_test_tcp.sh

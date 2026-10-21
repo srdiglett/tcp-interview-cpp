@@ -22,4 +22,9 @@ if(BUILD_TESTING)
     add_executable(protocol_tests tests/protocol_tests.cpp)
     target_link_libraries(protocol_tests PRIVATE tcp_interview_lib)
     add_test(NAME protocol_tests COMMAND protocol_tests)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME server_pool_tests COMMAND ${CMAKE_COMMAND} -E env
+        "SERVER_BIN=$<TARGET_FILE:tcp_server>"
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/server_pool_tests.py)
+    set_tests_properties(server_pool_tests PROPERTIES TIMEOUT 60)
 endif()

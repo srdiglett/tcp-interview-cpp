@@ -9,16 +9,18 @@
 
 namespace {
 
-tcp_interview::TcpServer* active_server = nullptr;
+// A lock-free atomic store is safe in a signal handler, even if another
+// thread receives the signal. Never lock the queue mutex here.
+static_assert(std::atomic<bool>::is_always_lock_free, "signal flag must be lock-free");
+std::atomic<bool> stop_requested{false};
 
 void handle_signal(int) {
-    if (active_server != nullptr) {
-        active_server->stop();
-    }
+    stop_requested.store(true, std::memory_order_relaxed);
 }
 
 void print_usage(const char* program) {
-    std::cerr << "Usage: " << program << " [--host 127.0.0.1] [--port 9000]\n";
+    std::cerr << "Usage: " << program
+              << " [--host 127.0.0.1] [--port 9000] [--workers 4] [--queue-capacity 16]\n";
 }
 
 }  // namespace
@@ -37,6 +39,16 @@ int main(int argc, char* argv[]) {
                 return 2;
             }
             config.port = static_cast<std::uint16_t>(port);
+        } else if ((arg == "--workers" || arg == "--queue-capacity") && i + 1 < argc) {
+            const std::string value = argv[++i];
+            if (value.empty() || value.size() > 4 ||
+                value.find_first_not_of("0123456789") != std::string::npos ||
+                std::stoi(value) < 1 || std::stoi(value) > 1024) {
+                std::cerr << "invalid pool size (expected 1..1024)\n";
+                return 2;
+            }
+            if (arg == "--workers") config.worker_count = std::stoul(value);
+            else config.queue_capacity = std::stoul(value);
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
@@ -48,10 +60,9 @@ int main(int argc, char* argv[]) {
 
     try {
         tcp_interview::TcpServer server(config);
-        active_server = &server;
         std::signal(SIGINT, handle_signal);
         std::signal(SIGTERM, handle_signal);
-        server.run();
+        server.run(&stop_requested);
     } catch (const std::exception& error) {
         std::cerr << "server failed: " << error.what() << '\n';
         return 1;

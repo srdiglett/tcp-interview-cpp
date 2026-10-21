@@ -3,3 +3,5 @@ build/
 *.o
 *.out
 .scannerwork/
+.yocto-qemu/
+docs/~$Servidor_CPP_Presentacion_15min.pptx
