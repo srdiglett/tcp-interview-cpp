@@ -20,7 +20,8 @@ void handle_signal(int) {
 
 void print_usage(const char* program) {
     std::cerr << "Usage: " << program
-              << " [--host 127.0.0.1] [--port 9000] [--workers 4] [--queue-capacity 16]\n";
+              << " [--host 127.0.0.1] [--port 9000] [--workers 4] [--queue-capacity 16]"
+              << " [--io-timeout-ms 10000]\n";
 }
 
 }  // namespace
@@ -33,12 +34,23 @@ int main(int argc, char* argv[]) {
         if (arg == "--host" && i + 1 < argc) {
             config.host = argv[++i];
         } else if (arg == "--port" && i + 1 < argc) {
-            const int port = std::atoi(argv[++i]);
-            if (port <= 0 || port > 65535) {
+            const std::string value = argv[++i];
+            if (value.empty() || value.size() > 5 ||
+                value.find_first_not_of("0123456789") != std::string::npos ||
+                std::stoi(value) < 1 || std::stoi(value) > 65535) {
                 std::cerr << "invalid port\n";
                 return 2;
             }
-            config.port = static_cast<std::uint16_t>(port);
+            config.port = static_cast<std::uint16_t>(std::stoi(value));
+        } else if (arg == "--io-timeout-ms" && i + 1 < argc) {
+            const std::string value = argv[++i];
+            if (value.empty() || value.size() > 7 ||
+                value.find_first_not_of("0123456789") != std::string::npos ||
+                std::stoi(value) < 1 || std::stoi(value) > 3600000) {
+                std::cerr << "invalid I/O timeout (expected 1..3600000 ms)\n";
+                return 2;
+            }
+            config.io_timeout_ms = std::stoi(value);
         } else if ((arg == "--workers" || arg == "--queue-capacity") && i + 1 < argc) {
             const std::string value = argv[++i];
             if (value.empty() || value.size() > 4 ||

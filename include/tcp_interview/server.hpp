@@ -20,6 +20,7 @@ struct ServerConfig {
     std::size_t max_line_bytes{4096};
     std::size_t worker_count{4};
     std::size_t queue_capacity{16};
+    int io_timeout_ms{10000};
 };
 
 class TcpServer {

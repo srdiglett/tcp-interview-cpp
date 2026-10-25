@@ -6,6 +6,7 @@ import signal
 import socket
 import struct
 import subprocess
+import time
 import unittest
 
 BINARY = os.environ.get("SERVER_BIN", "./build/tcp_server")
@@ -23,13 +24,13 @@ def line(connection):
 
 class PoolTests(unittest.TestCase):
     @contextlib.contextmanager
-    def server(self, workers=1, capacity=1):
+    def server(self, workers=1, capacity=1, timeout_ms=10000):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         process = subprocess.Popen(
             [BINARY, "--port", str(port), "--workers", str(workers),
-             "--queue-capacity", str(capacity)],
+             "--queue-capacity", str(capacity), "--io-timeout-ms", str(timeout_ms)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         connections = []
 
@@ -114,6 +115,75 @@ class PoolTests(unittest.TestCase):
             healthy.sendall(b"PING\n")
             self.assertEqual(line(healthy), b"PONG")
             self.assertIsNone(process.poll())
+
+    def test_idle_timeout_releases_worker_to_queued_client(self):
+        with self.server(timeout_ms=500) as (_, connect):
+            idle = connect()
+            line(idle)
+            waiting = connect()
+            self.assertIn(b"ready", line(waiting))
+            self.assertEqual(idle.recv(1), b"")
+            waiting.sendall(b"PING\n")
+            self.assertEqual(line(waiting), b"PONG")
+
+    def test_partial_bytes_do_not_reset_deadline(self):
+        with self.server(timeout_ms=800) as (_, connect):
+            slow = connect()
+            line(slow)
+            started = time.monotonic()
+            for byte in (b"P", b"I", b"N"):
+                slow.sendall(byte)
+                time.sleep(.15)
+            slow.settimeout(.6)
+            self.assertEqual(slow.recv(1), b"")
+            self.assertLess(time.monotonic() - started, 1.1)
+
+    def test_fragmented_and_coalesced_frames(self):
+        with self.server() as (_, connect):
+            client = connect()
+            line(client)
+            client.sendall(b"PI")
+            self.assertFalse(select.select([client], [], [], .1)[0])
+            client.sendall(b"NG\nECHO hello\nQUIT\n")
+            self.assertEqual(line(client), b"PONG")
+            self.assertEqual(line(client), b"hello")
+            self.assertEqual(line(client), b"BYE")
+
+    def test_eof_does_not_execute_incomplete_command(self):
+        with self.server() as (_, connect):
+            client = connect()
+            line(client)
+            client.sendall(b"PING")
+            client.shutdown(socket.SHUT_WR)
+            self.assertEqual(client.recv(1), b"")
+
+    def test_frame_size_boundary(self):
+        with self.server() as (_, connect):
+            client = connect()
+            line(client)
+            client.sendall(b"ECHO " + b"a" * 4091 + b"\n")
+            self.assertEqual(line(client), b"a" * 4091)
+            client.sendall(b"a" * 4097 + b"\n")
+            try:
+                self.assertEqual(client.recv(1), b"")
+            except ConnectionResetError:
+                pass
+
+    def test_invalid_numeric_arguments(self):
+        for option, value in (("--port", "9000oops"), ("--port", "65536"),
+                              ("--io-timeout-ms", "0"), ("--io-timeout-ms", "-1"),
+                              ("--io-timeout-ms", "3600001")):
+            with self.subTest(option=option, value=value):
+                result = subprocess.run([BINARY, option, value], capture_output=True, timeout=3)
+                self.assertEqual(result.returncode, 2)
+
+    def test_json_escape_cannot_inject_response_lines(self):
+        with self.server() as (_, connect):
+            client = connect()
+            line(client)
+            client.sendall(b'{"command":"ECHO","text":"one\\ntwo"}\nPING\n')
+            self.assertEqual(line(client), b"ERR multiline fields are not allowed")
+            self.assertEqual(line(client), b"PONG")
 
 
 if __name__ == "__main__":

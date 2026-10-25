@@ -202,6 +202,12 @@ CommandResult LineProtocol::execute_command(
     const std::string& command,
     const std::string& argument,
     const std::map<std::string, std::string>&) {
+    // Responses are line-framed too: decoded JSON escapes must not inject
+    // additional response lines, even through an unknown command's error.
+    if (command.find_first_of("\r\n") != std::string::npos ||
+        argument.find_first_of("\r\n") != std::string::npos) {
+        return {"ERR multiline fields are not allowed", false};
+    }
     if (command == "PING") {
         return {"PONG", false};
     }

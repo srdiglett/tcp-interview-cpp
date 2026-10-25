@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <fcntl.h>
@@ -22,18 +23,44 @@ void close_fd(int fd) {
     }
 }
 
-void send_all(int fd, const std::string& message) {
+using Clock = std::chrono::steady_clock;
+
+// The deadline belongs to the whole message, not to each byte. Otherwise a
+// slow client could keep a worker forever by sending one byte before expiry.
+void wait_ready(int fd, short events, Clock::time_point deadline) {
+    for (;;) {
+        const auto remaining = deadline - Clock::now();
+        if (remaining <= Clock::duration::zero()) {
+            throw std::runtime_error("I/O deadline exceeded");
+        }
+        const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(remaining);
+        pollfd descriptor{fd, events, 0};
+        const int result = poll(&descriptor, 1, static_cast<int>(milliseconds.count()) + 1);
+        if (result < 0) {
+            if (errno == EINTR) continue;
+            throw std::runtime_error("client poll failed");
+        }
+        if (result == 0) continue;
+        if (descriptor.revents & POLLNVAL) throw std::runtime_error("invalid client socket");
+        // Let recv/send report EOF or the actual error, including after shutdown.
+        if (descriptor.revents & (events | POLLHUP | POLLERR)) return;
+    }
+}
+
+void send_all(int fd, const std::string& message, int timeout_ms) {
     const char* data = message.data();
     std::size_t remaining = message.size();
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
 
     while (remaining > 0) {
+        wait_ready(fd, POLLOUT, deadline);
 #ifdef MSG_NOSIGNAL
         const ssize_t sent = send(fd, data, remaining, MSG_NOSIGNAL);
 #else
         const ssize_t sent = send(fd, data, remaining, 0);
 #endif
         if (sent < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("send failed: ") + std::strerror(errno));
@@ -47,29 +74,35 @@ void send_all(int fd, const std::string& message) {
     }
 }
 
-bool read_line(int fd, std::string& line, std::size_t max_line_bytes) {
+bool read_line(int fd, std::string& pending, std::string& line,
+               std::size_t max_line_bytes, int timeout_ms) {
     line.clear();
-
-    while (line.size() < max_line_bytes) {
-        char ch = 0;
-        const ssize_t received = recv(fd, &ch, 1, 0);
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;) {
+        const auto newline = pending.find('\n');
+        if (newline != std::string::npos) {
+            if (newline > max_line_bytes) throw std::runtime_error("line too long");
+            line = pending.substr(0, newline);
+            pending.erase(0, newline + 1);
+            return true;
+        }
+        if (pending.size() > max_line_bytes) throw std::runtime_error("line too long");
+        wait_ready(fd, POLLIN, deadline);
+        char buffer[4096];
+        const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
         if (received == 0) {
-            return !line.empty();
+            if (!pending.empty()) throw std::runtime_error("incomplete frame at EOF");
+            return false;
         }
         if (received < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("recv failed: ") + std::strerror(errno));
         }
 
-        if (ch == '\n') {
-            return true;
-        }
-        line.push_back(ch);
+        pending.append(buffer, static_cast<std::size_t>(received));
     }
-
-    throw std::runtime_error("line too long");
 }
 
 }  // namespace
@@ -77,6 +110,10 @@ bool read_line(int fd, std::string& line, std::size_t max_line_bytes) {
 TcpServer::TcpServer(ServerConfig config) : config_(std::move(config)) {
     if (config_.worker_count == 0 || config_.queue_capacity == 0) {
         throw std::invalid_argument("workers and queue capacity must be positive");
+    }
+    if (config_.io_timeout_ms < 1 || config_.io_timeout_ms > 3600000 ||
+        config_.max_line_bytes == 0) {
+        throw std::invalid_argument("invalid I/O limits");
     }
     active_clients_.assign(config_.worker_count, -1);
 }
@@ -196,9 +233,9 @@ void TcpServer::accept_loop(const std::atomic<bool>* signal_stop) {
             throw std::runtime_error(std::string("accept failed: ") + std::strerror(errno));
         }
 
-        // Accepted sockets must be blocking on platforms that inherit flags.
+        // poll readiness is only a hint: nonblocking I/O enforces our deadline.
         const int flags = fcntl(client_fd, F_GETFL, 0);
-        if (flags < 0 || fcntl(client_fd, F_SETFL, flags & ~O_NONBLOCK) < 0) {
+        if (flags < 0 || fcntl(client_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
             close_fd(client_fd);
             continue;
         }
@@ -254,17 +291,20 @@ void TcpServer::handle_client(int client_fd) {
     LineProtocol protocol(stats_);
 
     try {
-        send_all(client_fd, "OK tcp-interview ready\n");
+        send_all(client_fd, "OK tcp-interview ready\n", config_.io_timeout_ms);
 
         std::string line;
-        while (read_line(client_fd, line, config_.max_line_bytes)) {
+        std::string pending;
+        while (read_line(client_fd, pending, line, config_.max_line_bytes, config_.io_timeout_ms)) {
             const CommandResult result = protocol.handle(line);
-            send_all(client_fd, result.response + "\n");
+            send_all(client_fd, result.response + "\n", config_.io_timeout_ms);
             if (result.close_connection) {
                 break;
             }
         }
     } catch (const std::exception& error) {
+        static std::mutex log_mutex;
+        std::lock_guard<std::mutex> lock(log_mutex);
         std::cerr << "client error: " << error.what() << '\n';
     }
 

@@ -2,6 +2,9 @@
 
 Small TCP server in modern C++ for interview practice.
 
+See [current scope and roadmap (Spanish)](docs/ROADMAP.md) for what is implemented,
+how to demonstrate timeouts, and the proposed device-supervision use case.
+
 The goal is to keep the code simple enough to explain at a whiteboard, while covering sockets, bind/listen/accept, line-based protocols, a bounded connection queue, a fixed worker pool, coordinated shutdown, and tests.
 
 See [Producer-consumer and mutex guide](docs/CONCURRENCY.md) for the current
@@ -39,6 +42,9 @@ cmake --build build
 
 Pool settings: `--workers 4 --queue-capacity 16`. A full queue rejects new
 connections; each worker handles one connection until it closes.
+`--io-timeout-ms 10000` bounds each message read and response write. Idle clients
+are disconnected; sending a partial message does not renew its deadline.
+EOF without a newline does not execute an incomplete command.
 
 In another terminal:
 
@@ -153,4 +159,4 @@ ctest --test-dir build --output-on-failure
 - Producer-consumer coordination with mutex, condition_variable and join.
 - Tradeoffs of a blocking worker pool versus an event loop.
 - Handling partial reads/writes and client disconnects.
-- Where you would add timeouts, TLS, structured logging, and backpressure.
+- Absolute I/O deadlines, and where TLS, structured logging and further admission controls belong.
