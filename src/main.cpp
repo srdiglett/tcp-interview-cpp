@@ -21,7 +21,7 @@ void handle_signal(int) {
 void print_usage(const char* program) {
     std::cerr << "Usage: " << program
               << " [--host 127.0.0.1] [--port 9000] [--workers 4] [--queue-capacity 16]"
-              << " [--io-timeout-ms 10000]\n";
+              << " [--io-timeout-ms 10000] [--tls-cert FILE --tls-key FILE_OR_URI --tls-ca FILE]\n";
 }
 
 }  // namespace
@@ -61,6 +61,15 @@ int main(int argc, char* argv[]) {
             }
             if (arg == "--workers") config.worker_count = std::stoul(value);
             else config.queue_capacity = std::stoul(value);
+        } else if ((arg == "--tls-cert" || arg == "--tls-key" || arg == "--tls-ca") && i + 1 < argc) {
+            const std::string value = argv[++i];
+            if (value.empty()) {
+                std::cerr << "empty TLS argument\n";
+                return 2;
+            }
+            if (arg == "--tls-cert") config.tls_cert = value;
+            else if (arg == "--tls-key") config.tls_key = value;
+            else config.tls_ca = value;
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
@@ -71,6 +80,8 @@ int main(int argc, char* argv[]) {
     }
 
     try {
+        // OpenSSL's socket BIO can write without MSG_NOSIGNAL on Linux.
+        std::signal(SIGPIPE, SIG_IGN);
         tcp_interview::TcpServer server(config);
         std::signal(SIGINT, handle_signal);
         std::signal(SIGTERM, handle_signal);

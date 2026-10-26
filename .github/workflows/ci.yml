@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       # Debug mantiene activos los assert de protocol_tests.cpp.
+      - name: Install OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl
       - name: Configure
         run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
       - name: Build
@@ -48,6 +50,8 @@ jobs:
           test -n "$SONAR_PROJECT_KEY" || { echo 'Missing variable SONAR_PROJECT_KEY'; exit 1; }
           test -n "$SONAR_ORGANIZATION" || { echo 'Missing variable SONAR_ORGANIZATION'; exit 1; }
       # El analizador necesita los comandos reales, includes y flags de C++.
+      - name: Install OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev openssl
       - name: Configure compilation database
         run: >-
           cmake -S . -B build/sonar

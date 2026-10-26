@@ -4,4 +4,7 @@ build/
 *.out
 .scannerwork/
 .yocto-qemu/
+.test-pki/
+.softhsm-demo/
+__pycache__/
 docs/~$Servidor_CPP_Presentacion_15min.pptx

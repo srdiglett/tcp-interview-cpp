@@ -1,6 +1,9 @@
 CXX ?= clang++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -pthread -Iinclude
 BUILD_DIR := build
+OPENSSL_PREFIX ?= /opt/homebrew/opt/openssl@3
+OPENSSL_CFLAGS ?= -I$(OPENSSL_PREFIX)/include
+OPENSSL_LIBS ?= -L$(OPENSSL_PREFIX)/lib -lssl -lcrypto
 BOOST_PREFIX ?= /opt/homebrew/opt/boost
 BOOST_CFLAGS ?= -I$(BOOST_PREFIX)/include
 BOOST_LIBS ?= -L$(BOOST_PREFIX)/lib -lboost_json
@@ -26,7 +29,7 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 $(BUILD_DIR)/tcp_server: $(APP_SOURCES) $(wildcard include/tcp_interview/*.hpp) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(APP_SOURCES) -o $@
+	$(CXX) $(CXXFLAGS) $(OPENSSL_CFLAGS) $(APP_SOURCES) $(OPENSSL_LIBS) -o $@
 
 $(BUILD_DIR)/protocol_tests: $(TEST_SOURCES) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(TEST_SOURCES) -o $@
@@ -36,6 +39,14 @@ test: $(BUILD_DIR)/protocol_tests
 
 test-server: $(BUILD_DIR)/tcp_server
 	python3 tests/server_pool_tests.py
+
+.PHONY: test-tls
+test-tls: $(BUILD_DIR)/tcp_server
+	OPENSSL=$(OPENSSL_PREFIX)/bin/openssl python3 tests/tls_tests.py
+
+.PHONY: test-pkcs11
+test-pkcs11: $(BUILD_DIR)/tcp_server
+	python3 tests/pkcs11_tests.py
 
 smoke: $(BUILD_DIR)/tcp_server
 	./scripts/smoke_test_tcp.sh

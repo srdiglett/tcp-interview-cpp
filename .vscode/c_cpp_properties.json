@@ -1,0 +1,14 @@
+{
+  "configurations": [
+    {
+      "name": "macOS",
+      "includePath": [
+        "${workspaceFolder}/include",
+        "/opt/homebrew/opt/openssl@3/include"
+      ],
+      "cppStandard": "c++17",
+      "intelliSenseMode": "macos-clang-arm64"
+    }
+  ],
+  "version": 4
+}

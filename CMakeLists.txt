@@ -6,13 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL 3 REQUIRED)
 
 add_library(tcp_interview_lib
     src/protocol.cpp
     src/server.cpp
 )
 target_include_directories(tcp_interview_lib PUBLIC include)
-target_link_libraries(tcp_interview_lib PUBLIC Threads::Threads)
+target_link_libraries(tcp_interview_lib PUBLIC Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
 
 add_executable(tcp_server src/main.cpp)
 target_link_libraries(tcp_server PRIVATE tcp_interview_lib)
@@ -27,4 +28,8 @@ if(BUILD_TESTING)
         "SERVER_BIN=$<TARGET_FILE:tcp_server>"
         ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/server_pool_tests.py)
     set_tests_properties(server_pool_tests PROPERTIES TIMEOUT 60)
+    add_test(NAME tls_tests COMMAND ${CMAKE_COMMAND} -E env
+        "SERVER_BIN=$<TARGET_FILE:tcp_server>"
+        ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/tls_tests.py)
+    set_tests_properties(tls_tests PROPERTIES TIMEOUT 60)
 endif()

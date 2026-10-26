@@ -9,6 +9,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <memory>
+#include <openssl/ssl.h>
 
 #include "tcp_interview/protocol.hpp"
 
@@ -21,6 +23,9 @@ struct ServerConfig {
     std::size_t worker_count{4};
     std::size_t queue_capacity{16};
     int io_timeout_ms{10000};
+    std::string tls_cert;
+    std::string tls_key;  // PEM path or pkcs11: URI loaded by an OpenSSL provider.
+    std::string tls_ca;
 };
 
 class TcpServer {
@@ -43,6 +48,7 @@ private:
     void handle_client(int client_fd);
 
     ServerConfig config_;
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> tls_context_{nullptr, SSL_CTX_free};
     ServerStats stats_;
     std::mutex clients_mutex_;
     std::condition_variable clients_ready_;

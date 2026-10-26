@@ -24,13 +24,13 @@ def line(connection):
 
 class PoolTests(unittest.TestCase):
     @contextlib.contextmanager
-    def server(self, workers=1, capacity=1, timeout_ms=10000):
+    def server(self, workers=1, capacity=1, timeout_ms=10000, extra_args=()):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         process = subprocess.Popen(
             [BINARY, "--port", str(port), "--workers", str(workers),
-             "--queue-capacity", str(capacity), "--io-timeout-ms", str(timeout_ms)],
+             "--queue-capacity", str(capacity), "--io-timeout-ms", str(timeout_ms), *extra_args],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         connections = []
 

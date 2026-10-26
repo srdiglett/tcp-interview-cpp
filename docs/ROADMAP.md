@@ -13,6 +13,10 @@ El ejemplo de analytics y el cliente SFTP son programas separados del servidor.
 
 ## Implementado y comprobable
 
+Actualizacion criptografica: mTLS y clave del servidor mediante PKCS#11 ya
+estan implementados. Ver [guia y limites](CRYPTOGRAPHY.md). La propuesta de
+supervision de dispositivos sigue pendiente.
+
 - Pool fijo de workers y cola acotada de conexiones.
 - Mutex y condition_variable para transferir conexiones entre productor y consumidores.
 - Rechazo de conexiones cuando la cola esta llena.
@@ -53,15 +57,15 @@ Estos plazos no garantizan equidad ni protegen por si solos contra un DoS.
 2. Implementar heartbeat, registro acotado y consulta de dispositivos online/offline.
 3. Persistir estado e historial acotado en SQLite, con transacciones y tests de reinicio.
 4. Crear un agente de dispositivo con reconexion y backoff; probarlo en Yocto/QEMU.
-5. Definir autenticacion y transporte TLS antes de exponer el servicio a una red no fiable.
+5. Ampliar mTLS/PKCS#11 con autorizacion por identidad, revocacion y rotacion.
 6. Expresar propiedad de sockets con RAII, manteniendo la coordinacion de shutdown/close.
 7. Anadir logs estructurados, metricas de saturacion y tests de carga y sanitizadores.
 8. Evaluar expiracion de cola y limite de duracion de sesion; cambiar a event loop
    si necesitamos muchas conexiones persistentes con pocos hilos.
 
 No tiene sentido afirmar que es un producto terminado o listo para produccion:
-no hay autenticacion, TLS ni persistencia en el servidor actual. Mantenerlo en
-loopback para practicar; no abrir el puerto a Internet.
+hay mTLS opcional, pero no persistencia ni una politica completa de autorizacion.
+Mantenerlo en loopback para practicar; no abrir el puerto a Internet.
 
 ## Explicacion para entrevista
 

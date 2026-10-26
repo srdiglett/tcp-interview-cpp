@@ -35,7 +35,7 @@ docker run "${args[@]}" tcp-interview-valgrind bash -euc '
       program_args=("$mode")
       ;;
   esac
-  g++ "${flags[@]}" "${sources[@]}" -o /tmp/valgrind-program
+  g++ "${flags[@]}" "${sources[@]}" -lssl -lcrypto -o /tmp/valgrind-program
   exec valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
     --track-origins=yes --track-fds=yes --error-exitcode=99 \
     /tmp/valgrind-program "${program_args[@]}"

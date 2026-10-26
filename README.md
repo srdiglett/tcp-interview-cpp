@@ -2,6 +2,10 @@
 
 Small TCP server in modern C++ for interview practice.
 
+Optional mutual TLS and a PKCS#11-backed server key are implemented with OpenSSL 3.
+See [Cryptography: mTLS and SoftHSM (Spanish)](docs/CRYPTOGRAPHY.md) for setup,
+commands, tests and security limitations. Plain TCP remains the default lab mode.
+
 See [current scope and roadmap (Spanish)](docs/ROADMAP.md) for what is implemented,
 how to demonstrate timeouts, and the proposed device-supervision use case.
 
@@ -21,9 +25,10 @@ docs/STUDY_NOTES.md
 
 ## Build
 
-With Make, no extra dependencies beyond Apple clang/Xcode Command Line Tools:
+With Make, Apple clang/Xcode Command Line Tools and OpenSSL 3:
 
 ```bash
+brew install openssl@3
 make
 ```
 

@@ -6,6 +6,8 @@
 #include <cstring>
 #include <iostream>
 #include <fcntl.h>
+#include <memory>
+#include <mutex>
 #include <poll.h>
 #include <netinet/in.h>
 #include <stdexcept>
@@ -13,6 +15,9 @@
 #include <thread>
 #include <unistd.h>
 #include <utility>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/store.h>
 
 namespace tcp_interview {
 namespace {
@@ -47,12 +52,55 @@ void wait_ready(int fd, short events, Clock::time_point deadline) {
     }
 }
 
-void send_all(int fd, const std::string& message, int timeout_ms) {
+bool tls_retry(SSL* ssl, int result, int fd, Clock::time_point deadline) {
+    const int error = SSL_get_error(ssl, result);
+    if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        wait_ready(fd, error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT, deadline);
+        return true;
+    }
+    if (error == SSL_ERROR_ZERO_RETURN) return false;
+    throw std::runtime_error("TLS operation failed (peer, certificate or transport error)");
+}
+
+void tls_handshake(SSL* ssl, int fd, int timeout_ms) {
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;) {
+        ERR_clear_error();
+        const int result = SSL_accept(ssl);
+        if (result == 1) return;
+        if (!tls_retry(ssl, result, fd, deadline)) throw std::runtime_error("TLS handshake closed");
+    }
+}
+
+void tls_close(SSL* ssl, int fd, int timeout_ms) {
+    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;) {
+        ERR_clear_error();
+        const int result = SSL_shutdown(ssl);
+        // Sending close_notify is sufficient here; do not wait for peer shutdown.
+        if (result >= 0) return;
+        if (!tls_retry(ssl, result, fd, deadline)) return;
+    }
+}
+
+void send_all(int fd, SSL* ssl, const std::string& message, int timeout_ms) {
     const char* data = message.data();
     std::size_t remaining = message.size();
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
 
     while (remaining > 0) {
+        if (ssl) {
+            ERR_clear_error();
+            std::size_t sent = 0;
+            const int result = SSL_write_ex(ssl, data, remaining, &sent);
+            if (result != 1) {
+                if (tls_retry(ssl, result, fd, deadline)) continue;
+                throw std::runtime_error("TLS peer closed during write");
+            }
+            data += sent;
+            remaining -= sent;
+            continue;
+        }
         wait_ready(fd, POLLOUT, deadline);
 #ifdef MSG_NOSIGNAL
         const ssize_t sent = send(fd, data, remaining, MSG_NOSIGNAL);
@@ -74,7 +122,7 @@ void send_all(int fd, const std::string& message, int timeout_ms) {
     }
 }
 
-bool read_line(int fd, std::string& pending, std::string& line,
+bool read_line(int fd, SSL* ssl, std::string& pending, std::string& line,
                std::size_t max_line_bytes, int timeout_ms) {
     line.clear();
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -87,8 +135,21 @@ bool read_line(int fd, std::string& pending, std::string& line,
             return true;
         }
         if (pending.size() > max_line_bytes) throw std::runtime_error("line too long");
-        wait_ready(fd, POLLIN, deadline);
         char buffer[4096];
+        if (ssl) {
+            // SSL may already hold decrypted bytes even when poll is not readable.
+            ERR_clear_error();
+            std::size_t received = 0;
+            const int result = SSL_read_ex(ssl, buffer, sizeof(buffer), &received);
+            if (result == 1) {
+                pending.append(buffer, received);
+                continue;
+            }
+            if (tls_retry(ssl, result, fd, deadline)) continue;
+            if (!pending.empty()) throw std::runtime_error("incomplete TLS frame at EOF");
+            return false;
+        }
+        wait_ready(fd, POLLIN, deadline);
         const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
         if (received == 0) {
             if (!pending.empty()) throw std::runtime_error("incomplete frame at EOF");
@@ -116,6 +177,42 @@ TcpServer::TcpServer(ServerConfig config) : config_(std::move(config)) {
         throw std::invalid_argument("invalid I/O limits");
     }
     active_clients_.assign(config_.worker_count, -1);
+    if (!config_.tls_cert.empty() || !config_.tls_key.empty() || !config_.tls_ca.empty()) {
+        if (config_.tls_cert.empty() || config_.tls_key.empty() || config_.tls_ca.empty()) {
+            throw std::invalid_argument("TLS requires certificate, key and client CA");
+        }
+        tls_context_.reset(SSL_CTX_new(TLS_server_method()));
+        auto* ctx = tls_context_.get();
+        if (!ctx || SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1 ||
+            SSL_CTX_use_certificate_chain_file(ctx, config_.tls_cert.c_str()) != 1 ||
+            SSL_CTX_load_verify_locations(ctx, config_.tls_ca.c_str(), nullptr) != 1) {
+            throw std::runtime_error("could not configure TLS certificates");
+        }
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+        SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_TICKET);
+        SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+        // OSSL_STORE supports both PEM files and provider-backed PKCS#11 URIs.
+        // PINs belong in a protected provider configuration, never CLI arguments.
+        if (config_.tls_key.find("pin-value=") != std::string::npos) {
+            throw std::invalid_argument("do not put a token PIN in command-line arguments");
+        }
+        std::unique_ptr<OSSL_STORE_CTX, decltype(&OSSL_STORE_close)> store(
+            OSSL_STORE_open(config_.tls_key.c_str(), nullptr, nullptr, nullptr, nullptr), OSSL_STORE_close);
+        if (!store) throw std::runtime_error("could not open TLS key store");
+        bool loaded = false;
+        while (!OSSL_STORE_eof(store.get())) {
+            std::unique_ptr<OSSL_STORE_INFO, decltype(&OSSL_STORE_INFO_free)> info(
+                OSSL_STORE_load(store.get()), OSSL_STORE_INFO_free);
+            if (!info) break;
+            if (OSSL_STORE_INFO_get_type(info.get()) == OSSL_STORE_INFO_PKEY) {
+                loaded = SSL_CTX_use_PrivateKey(ctx, OSSL_STORE_INFO_get0_PKEY(info.get())) == 1;
+                break;
+            }
+        }
+        if (!loaded || SSL_CTX_check_private_key(ctx) != 1) {
+            throw std::runtime_error("TLS key unavailable or does not match certificate");
+        }
+    }
 }
 
 TcpServer::~TcpServer() {
@@ -170,6 +267,7 @@ void TcpServer::run(const std::atomic<bool>* signal_stop) {
         std::cout << "listening on " << config_.host << ':' << config_.port
                   << " workers=" << config_.worker_count
                   << " queue=" << config_.queue_capacity << std::endl;
+        std::cerr << (tls_context_ ? "transport: mutual TLS\n" : "WARNING: plaintext TCP, no authentication\n");
         accept_loop(signal_stop);
     } catch (...) {
         stop();
@@ -291,17 +389,24 @@ void TcpServer::handle_client(int client_fd) {
     LineProtocol protocol(stats_);
 
     try {
-        send_all(client_fd, "OK tcp-interview ready\n", config_.io_timeout_ms);
+        std::unique_ptr<SSL, decltype(&SSL_free)> tls(nullptr, SSL_free);
+        if (tls_context_) {
+            tls.reset(SSL_new(tls_context_.get()));
+            if (!tls || SSL_set_fd(tls.get(), client_fd) != 1) throw std::runtime_error("TLS session allocation failed");
+            tls_handshake(tls.get(), client_fd, config_.io_timeout_ms);
+        }
+        send_all(client_fd, tls.get(), "OK tcp-interview ready\n", config_.io_timeout_ms);
 
         std::string line;
         std::string pending;
-        while (read_line(client_fd, pending, line, config_.max_line_bytes, config_.io_timeout_ms)) {
+        while (read_line(client_fd, tls.get(), pending, line, config_.max_line_bytes, config_.io_timeout_ms)) {
             const CommandResult result = protocol.handle(line);
-            send_all(client_fd, result.response + "\n", config_.io_timeout_ms);
+            send_all(client_fd, tls.get(), result.response + "\n", config_.io_timeout_ms);
             if (result.close_connection) {
                 break;
             }
         }
+        if (tls) tls_close(tls.get(), client_fd, config_.io_timeout_ms);
     } catch (const std::exception& error) {
         static std::mutex log_mutex;
         std::lock_guard<std::mutex> lock(log_mutex);
